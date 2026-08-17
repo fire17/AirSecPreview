@@ -41,8 +41,9 @@ no local AirSec server, and no laptop that must remain online.
 - Person A, person B, BAG-1, and authorised security staff retain distinct visual identities.
 - Orange and red heartbeat rings are driven by scenario events, including the P2 pickup.
 - A selected entity exposes its whole path; an interaction dot reveals and opens related paths.
-- Wing A is only one view into a larger terminal, with current/nearby/all event scopes.
-- The terminal automatically pulls back to overview 30 seconds after the 95-second scenario ends.
+- Terminal 1 Wing A is one small live zone inside a 400×230 m airport campus, with current/nearby/all event scopes.
+- The campus includes distinct terminals, concourses, aprons, stands, taxiways, runways, service roads, and moving aircraft.
+- The map automatically pulls back to the full airport 30 seconds after the 95-second scenario ends.
 
 > [!IMPORTANT]
 > The public artifact is an honest deterministic showcase. It does not claim to be a live airport feed or the private production backend.
@@ -63,8 +64,8 @@ flowchart LR
 ## Quickstart
 
 Open [airsec.akeyo.io](https://airsec.akeyo.io), click a person or item, then hover over its
-trail and interaction dots. Use the mouse wheel to zoom, Shift-drag to pan, and the speed
-buttons to move from 0.25× to 4×.
+trail and interaction dots. Use the mouse wheel to zoom, drag anywhere to pan, change replay
+speed from 0.25× to 4×, and use the traffic slider to tune terminal density.
 
 ![AirSec red-alert tracking state](assets/preview.png)
 
@@ -78,15 +79,17 @@ buttons to move from 0.25× to 4×.
 | Branch pivot | Reveals related paths in distinct colors and lets the operator hop to them |
 | Severity tracking | Starts orange at drop/abandonment and red after the non-owner pickup |
 | Security semantics | Records authorised staff contact without generating the illicit-contact alert |
-| Terminal navigation | Fits Wing A, Wing B, Wing C, or the entire terminal; free zoom/pan remains available |
+| Airport navigation | Fits Terminal 1 Wing A, Terminal 2, Terminal 3, the north satellite, international terminal, airside, or the full airport; free zoom/pan remains available |
+| Airport operations | Animates top-down aircraft on the airfield and identifies parked/taxiing state on hover |
+| Traffic density | Adds a deterministic high-density terminal population with an operator-controlled per-zone slider |
 | Event scope | Filters the right rail to current wing by default, nearby wings, or all wings |
 
 <details>
 <summary><b>What the static export includes</b></summary>
 
-- The full terminal floorplan, zones, walls, and camera coverage geometry.
+- The full airport campus plus Terminal 1's detailed floorplan, zones, walls, and camera coverage geometry.
 - The 95-second A/B/BAG-1 scenario plus the 30-second post-scenario observation window.
-- Additional Wing B and Wing C movements and interactions.
+- Additional Terminal 2, Terminal 3, north satellite, and international-terminal movements and interactions.
 - Client-side timeline and custody evidence used by the dossier and interaction branches.
 - A deterministic loop so the public demo remains usable without a backend.
 
@@ -106,9 +109,10 @@ flowchart TD
 ```
 
 The release was deliberately staged outside the production repository. The browser probe
-selected A, loaded 281 trail points and three interactions, revealed BAG-1 as a related
-branch, proved current-wing filtering hid three off-wing alerts, and measured a 2.23-second
-scenario advance during a 0.6-second wall interval at 4×.
+selected A, clipped its trail to the current replay instant with three visible interactions,
+revealed BAG-1 as a related branch, proved current-wing filtering hid off-wing alerts,
+verified traffic-density changes and plain-drag panning, and measured accelerated scenario
+advance at 4×.
 
 Defects caught before publication included the need for a static backend seam, carried-item
 marker overlap, sandbox-only test database failures, and a canvas/page coordinate mismatch

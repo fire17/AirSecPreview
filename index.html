@@ -13,6 +13,7 @@
     --accent:oklch(0.80 0.130 75); --ok:oklch(0.76 0.130 155); --flag:oklch(0.76 0.150 65);
     --redflag:oklch(0.62 0.210 25); --redbg:oklch(0.30 0.090 25);
     --person-a:oklch(0.76 0.18 315); --person-b:oklch(0.78 0.14 220);
+    --bag-blue:oklch(0.70 0.17 250);
     --mono:ui-monospace,"SF Mono",Menlo,monospace; --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -62,6 +63,8 @@
     border-radius:5px;padding:.27rem .42rem;font-family:var(--mono);font-size:.61rem;line-height:1;cursor:pointer;white-space:nowrap}
   .toolrow button:hover,.scope button:hover{color:var(--ink);background:var(--surface-2)}
   .toolrow button.on,.scope button.on{color:var(--bg);background:var(--primary);border-color:var(--primary)}
+  .toolrow input[type="range"]{width:108px;accent-color:var(--primary);cursor:pointer}
+  .toolrow output{min-width:3.2rem;font-family:var(--mono);font-size:.6rem;color:var(--ink);text-align:right;padding-right:.2rem}
   #wingname{position:absolute;left:50%;top:.8rem;transform:translateX(-50%);z-index:3;pointer-events:none;
     font-family:var(--mono);font-size:.66rem;color:var(--ink);background:oklch(0.19 0.02 230/.78);
     border:1px solid var(--hairline);border-radius:999px;padding:.32rem .65rem;backdrop-filter:blur(7px)}
@@ -152,6 +155,10 @@
           <button type="button" data-view="reset">fit wing</button>
         </div>
         <div class="toolrow" id="speedcontrols"><span class="label">speed</span></div>
+        <div class="toolrow" id="trafficcontrols"><span class="label">traffic</span>
+          <input id="traffic" type="range" min="12" max="72" step="1" value="56" aria-label="Visible terminal traffic">
+          <output id="trafficout" for="traffic">56 / zone</output>
+        </div>
       </div>
       <div id="wingname">Wing A · live bag demo</div>
       <div id="banner"><span class="dot"></span><span id="bannertxt"></span></div>
@@ -188,7 +195,7 @@ const css=v=>{_p.style.color='';_p.style.color=v;return getComputedStyle(_p).col
 const C={bg:css('var(--bg)'),hairline:css('var(--hairline)'),ink:css('var(--ink)'),muted:css('var(--muted)'),
   faint:css('var(--faint)'),primary:css('var(--primary)'),primaryDim:css('var(--primary-dim)'),accent:css('var(--accent)'),
   ok:css('var(--ok)'),flag:css('var(--flag)'),redflag:css('var(--redflag)'),
-  personA:css('var(--person-a)'),personB:css('var(--person-b)')};
+  personA:css('var(--person-a)'),personB:css('var(--person-b)'),bagBlue:css('var(--bag-blue)')};
 const rgba=(color,a)=>color.startsWith('oklch(')
   ? color.replace(/\)$/,` / ${a})`)
   : (()=>{const m=color.match(/[\d.]+/g);return `rgba(${m[0]},${m[1]},${m[2]},${a})`;})();
@@ -200,7 +207,7 @@ const F_LOST=1<<2,F_PLACED=1<<3,F_ABANDONED=1<<4,F_CARRIED=1<<5,F_SELECTED=1<<6;
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 let W=0,H=0,DPR=Math.min(devicePixelRatio||1,2);
 let fac=null,tf=null,hover=null,t0=performance.now();
-let WINGS=[],activeWing='wing-a',eventScope='current',simulationSpeed=1;
+let WINGS=[],activeWing='wing-a',eventScope='current',simulationSpeed=1,trafficLimit=56;
 const view={cx:36,cy:32,zoom:1};
 const ents=new Map();               // id -> {px,py,tx,ty,t,flags,kind,seen}
 let selectedId=null,selectedGid=null,selectedRoute=null,branchRoutes=[],hoveredInteraction=null,simT=null;
@@ -224,10 +231,13 @@ function zoomAt(mx,my,factor){if(!tf)return;const wx=(mx-tf.ox)/tf.s,wy=(my-tf.o
   const next=Math.max(.55,Math.min(12,view.zoom*factor));if(next===view.zoom)return;
   view.zoom=next;const s=tf.base*view.zoom;view.cx=wx-(mx-W/2)/s;view.cy=wy-(my-H/2)/s;fit();}
 function configureWings(){WINGS=[
-  {id:'wing-a',short:'A',name:'Wing A · live bag demo',bounds:[0,0,72,64],minX:-Infinity,maxX:44},
-  {id:'wing-b',short:'B',name:'Wing B · central departures',bounds:[38,0,100,64],minX:44,maxX:82},
-  {id:'wing-c',short:'C',name:'Wing C · east gates',bounds:[76,0,120,64],minX:82,maxX:Infinity},
-  {id:'terminal',short:'all',name:'Full terminal overview',bounds:[0,0,fac.width_m,fac.height_m]}
+  {id:'wing-a',short:'A',name:'Terminal 1 · Wing A · live bag demo',bounds:[0,0,122,66]},
+  {id:'terminal-2',short:'T2',name:'Terminal 2 · domestic departures',bounds:[132,0,262,78]},
+  {id:'terminal-3',short:'T3',name:'Terminal 3 · regional gates',bounds:[272,0,400,78]},
+  {id:'north',short:'N',name:'North satellite concourse',bounds:[50,78,212,166]},
+  {id:'international',short:'INTL',name:'International terminal',bounds:[216,78,398,166]},
+  {id:'airside',short:'RWY',name:'Airfield · aprons, taxiways and runways',bounds:[0,155,400,230]},
+  {id:'terminal',short:'all',name:'Full airport campus overview',bounds:[0,0,fac.width_m,fac.height_m]}
 ];
   const box=document.getElementById('wingcontrols');
   box.innerHTML='<span class="label">wing</span>'+WINGS.map(w=>`<button type="button" data-wing="${w.id}">${w.short}</button>`).join('');
@@ -237,18 +247,69 @@ function setWing(id,user=false){const wing=WINGS.find(w=>w.id===id)||WINGS[0];ac
   document.getElementById('wingname').textContent=wing.name;
   document.querySelectorAll('[data-wing]').forEach(b=>b.classList.toggle('on',b.dataset.wing===activeWing));
   applyAlertFilter();if(user)autoOverviewDone=true;}
-function wingForX(x){return WINGS.find(w=>w.id!=='terminal'&&x>=w.minX&&x<w.maxX)?.id||'wing-a';}
+function wingForPoint(x,y){return WINGS.find(w=>w.id!=='terminal'&&x>=w.bounds[0]&&x<=w.bounds[2]&&y>=w.bounds[1]&&y<=w.bounds[3])?.id||'wing-a';}
 function visibleWingIds(){if(activeWing==='terminal')return new Set(WINGS.filter(w=>w.id!=='terminal').map(w=>w.id));
-  const i=WINGS.findIndex(w=>w.id===activeWing);if(eventScope==='nearby')return new Set(WINGS.slice(Math.max(0,i-1),Math.min(3,i+2)).map(w=>w.id));
+  const operational=WINGS.filter(w=>w.id!=='terminal'),i=operational.findIndex(w=>w.id===activeWing);
+  if(eventScope==='nearby')return new Set(operational.slice(Math.max(0,i-1),Math.min(operational.length,i+2)).map(w=>w.id));
   return new Set([activeWing]);}
 function poly(pts){ctx.beginPath();pts.forEach((p,i)=>{const x=tf.X(p[0]),y=tf.Y(p[1]);i?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.closePath();}
 function pip(px,py,pts){let c=false;for(let i=0,j=pts.length-1;i<pts.length;j=i++){const xi=pts[i][0],yi=pts[i][1],xj=pts[j][0],yj=pts[j][1];
   if(((yi>py)!=(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))c=!c;}return c;}
 
+function extendAirport(base){base.name='AirSec Demo Airport Campus';base.width_m=400;base.height_m=230;
+  base.campus={
+    aprons:[
+      {rect:[128,4,268,82],label:'DOMESTIC APRON'}, {rect:[268,4,400,82],label:'REGIONAL APRON'},
+      {rect:[46,78,214,170],label:'NORTH APRON'}, {rect:[214,78,400,170],label:'INTERNATIONAL APRON'}],
+    buildings:[
+      {rect:[140,12,252,50],label:'TERMINAL 2'}, {rect:[154,50,170,72]},{rect:[188,50,204,72]},{rect:[222,50,238,72]},
+      {rect:[282,12,390,50],label:'TERMINAL 3'}, {rect:[294,50,310,70]},{rect:[328,50,344,70]},{rect:[362,50,378,70]},
+      {rect:[68,94,196,124],label:'NORTH SATELLITE'}, {rect:[78,124,96,154]},{rect:[119,124,137,158]},{rect:[168,124,186,154]},
+      {rect:[230,92,382,126],label:'INTERNATIONAL'}, {rect:[244,126,262,158]},{rect:[286,126,304,162]},
+      {rect:[330,126,348,158]},{rect:[366,126,382,150]},
+      {rect:[12,88,42,114],label:'CARGO'}, {rect:[12,124,42,145],label:'OPS'}],
+    taxiways:[
+      [[12,174],[388,174]], [[48,184],[355,184]], [[118,66],[118,174]], [[260,66],[260,174]], [[396,64],[396,174]],
+      [[54,154],[54,184]], [[204,154],[204,184]], [[392,148],[392,184]]],
+    roads:[[[0,84],[45,84],[60,74],[122,74]],[[122,84],[270,84],[282,74],[400,74]],[[4,164],[55,164],[70,150]],[[214,166],[400,166]]],
+    runways:[{rect:[16,194,384,207],name:'09L — 27R'},{rect:[42,216,358,226],name:'09R — 27L'}],
+    stands:[
+      [146,57,-Math.PI/2],[180,57,-Math.PI/2],[214,57,-Math.PI/2],[248,57,-Math.PI/2],
+      [288,57,-Math.PI/2],[322,57,-Math.PI/2],[356,57,-Math.PI/2],[386,57,-Math.PI/2],
+      [82,132,-Math.PI/2],[126,136,-Math.PI/2],[176,132,-Math.PI/2],[250,136,-Math.PI/2],[294,140,-Math.PI/2],[338,136,-Math.PI/2],[374,134,-Math.PI/2]],
+    planes:[
+      {id:'AS217',keys:[[0,32,174],[35,96,174],[70,168,184],[105,248,174],[140,336,174]],heading:0},
+      {id:'AS408',keys:[[0,354,184],[45,278,184],[90,212,174],[140,128,174]],heading:Math.PI},
+      {id:'AS031',keys:[[0,146,57],[140,146,57]],heading:-Math.PI/2,parked:true},
+      {id:'AS772',keys:[[0,322,57],[140,322,57]],heading:-Math.PI/2,parked:true},
+      {id:'AS619',keys:[[0,294,140],[140,294,140]],heading:-Math.PI/2,parked:true}
+    ]};return base;}
+function campusRect(rect,fill,stroke){const[x0,y0,x1,y1]=rect,x=tf.X(x0),y=tf.Y(y0),w=(x1-x0)*tf.s,h=(y1-y0)*tf.s;
+  ctx.fillStyle=fill;ctx.fillRect(x,y,w,h);ctx.strokeStyle=stroke;ctx.lineWidth=1;ctx.strokeRect(x,y,w,h);}
+function drawPlane(plane,t){const p=keyPoint(plane.keys,t),x=tf.X(p.x),y=tf.Y(p.y),s=Math.max(.55,Math.min(1.45,tf.s*1.7));plane._sx=x;plane._sy=y;
+  let heading=plane.heading;if(!plane.parked){const p2=keyPoint(plane.keys,Math.min(STATIC_DURATION,t+.5));heading=Math.atan2(p2.y-p.y,p2.x-p.x);}
+  ctx.save();ctx.translate(x,y);ctx.rotate(heading);ctx.scale(s,s);ctx.fillStyle=plane.parked?rgba(C.muted,.68):rgba(C.ink,.82);ctx.strokeStyle=rgba(C.bg,.9);ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(10,0);ctx.lineTo(2.5,-2);ctx.lineTo(-2,-10);ctx.lineTo(-5,-10);ctx.lineTo(-3.5,-2);ctx.lineTo(-10,-1.5);
+  ctx.lineTo(-10,1.5);ctx.lineTo(-3.5,2);ctx.lineTo(-5,10);ctx.lineTo(-2,10);ctx.lineTo(2.5,2);ctx.closePath();ctx.fill();ctx.stroke();ctx.restore();}
+function drawCampus(t){const c=fac.campus;if(!c)return;
+  for(const a of c.aprons)campusRect(a.rect,rgba(C.primaryDim,.055),rgba(C.primaryDim,.18));
+  for(const r of c.runways){campusRect(r.rect,rgba(C.ink,.09),rgba(C.ink,.26));const y=tf.Y((r.rect[1]+r.rect[3])/2);
+    ctx.setLineDash([9,8]);ctx.beginPath();ctx.moveTo(tf.X(r.rect[0]+8),y);ctx.lineTo(tf.X(r.rect[2]-8),y);ctx.strokeStyle=rgba(C.ink,.5);ctx.lineWidth=1.2;ctx.stroke();ctx.setLineDash([]);
+    ctx.font='600 9px var(--mono)';ctx.fillStyle=rgba(C.ink,.55);ctx.fillText(r.name,tf.X(r.rect[0]+10),y-5);}
+  const strokePath=(pts,col,width,dash=[])=>{ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(tf.X(p[0]),tf.Y(p[1])):ctx.moveTo(tf.X(p[0]),tf.Y(p[1])));
+    ctx.setLineDash(dash);ctx.strokeStyle=col;ctx.lineWidth=width;ctx.stroke();ctx.setLineDash([]);};
+  c.taxiways.forEach(p=>strokePath(p,rgba(C.flag,.34),Math.max(1.4,tf.s*2.2),[7,5]));
+  c.roads.forEach(p=>strokePath(p,rgba(C.muted,.24),Math.max(1,tf.s*1.2),[3,4]));
+  for(const b of c.buildings){campusRect(b.rect,rgba(C.surface||C.hairline,.34),rgba(C.ink,.42));if(b.label){ctx.font='600 10px var(--mono)';ctx.fillStyle=rgba(C.ink,.7);ctx.fillText(b.label,tf.X(b.rect[0])+7,tf.Y(b.rect[1])+14);}}
+  for(const[x,y,h]of c.stands){ctx.save();ctx.translate(tf.X(x),tf.Y(y));ctx.rotate(h);ctx.strokeStyle=rgba(C.accent,.38);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-7,0);ctx.lineTo(7,0);ctx.moveTo(4,-3);ctx.lineTo(7,0);ctx.lineTo(4,3);ctx.stroke();ctx.restore();}
+  const flightT=staticDemo?staticNow()%STATIC_DURATION:t%STATIC_DURATION;c.planes.forEach(p=>drawPlane(p,flightT));
+}
+
 function drawFacility(t){
-  ctx.strokeStyle=rgba(C.hairline,.32);ctx.lineWidth=1;
+  ctx.strokeStyle=rgba(C.hairline,fac.campus?.16:.32);ctx.lineWidth=1;
   for(let gx=0;gx<=fac.width_m;gx+=10){ctx.beginPath();ctx.moveTo(tf.X(gx),tf.Y(0));ctx.lineTo(tf.X(gx),tf.Y(fac.height_m));ctx.stroke();}
   for(let gy=0;gy<=fac.height_m;gy+=10){ctx.beginPath();ctx.moveTo(tf.X(0),tf.Y(gy));ctx.lineTo(tf.X(fac.width_m),tf.Y(gy));ctx.stroke();}
+  drawCampus(t);
   for(const wing of WINGS.filter(w=>w.id!=='terminal')){const[x0,y0,x1,y1]=wing.bounds;
     ctx.setLineDash([6,6]);ctx.strokeStyle=rgba(wing.id===activeWing?C.accent:C.muted,wing.id===activeWing?.58:.22);ctx.lineWidth=1.2;
     ctx.strokeRect(tf.X(x0),tf.Y(y0),tf.X(x1)-tf.X(x0),tf.Y(y1)-tf.Y(y0));ctx.setLineDash([]);
@@ -279,8 +340,14 @@ function routePointAt(route,t){
 }
 const baseGid=gid=>String(gid||'').replace(/#\d+$/,'');
 const gidSuffix=gid=>String(gid||'').match(/#\d+$/)?.[0]||'';
-function entityColor(gid,kind){const base=baseGid(gid);if(staffGids.has(gid))return C.ok;
-  if(base==='BAG-1')return C.redflag;if(kind==='item')return C.accent;if(base==='A')return C.personA;if(base==='B')return C.personB;return C.primary;}
+function entityColor(gid,kind,threat){const base=baseGid(gid);if(staffGids.has(gid))return C.ok;
+  if(base==='BAG-1')return threat==='red'?C.redflag:(threat==='orange'?C.flag:C.bagBlue);
+  if(kind==='item')return C.accent;if(base==='A')return C.personA;if(base==='B')return C.personB;return C.primary;}
+function crowdIndex(gid){const m=baseGid(gid).match(/C(\d+)$/);return m?Number(m[1]):null;}
+function entityVisible(gid){const i=crowdIndex(gid);return i==null||i<trafficLimit;}
+function refreshCounts(){let np=0,ni=0,ng=0;for(const[id,e]of ents){const meta=gidOf.get(id);if(!entityVisible(meta?.gid||''))continue;
+  if(e.kind===0)np++;else if(e.kind===1)ni++;else if(e.kind===2)ng++;}
+  document.getElementById('npers').textContent=np;document.getElementById('nitem').textContent=ni;document.getElementById('ngrp').textContent=ng;}
 function interactionColor(it){const types=it.types||[];
   if(it.related?.some(r=>staffGids.has(r.gid)))return C.ok;
   if(types.some(t=>/pickup|transfer|exchange|reclaim/.test(t)))return C.redflag;
@@ -298,9 +365,9 @@ function drawRoute(route,col,maxAlpha,width,waypoints){
   const p=route?.points||[],n=p.length;if(n<2)return;
   ctx.lineCap='round';ctx.lineJoin='round';
   for(let i=1;i<n;i++){const a=p[i-1],b=p[i];if(b.t-a.t>1)continue;
-    const f=i/(n-1),alpha=.11+(maxAlpha-.11)*f*f;
+    const f=i/(n-1),alpha=.30+(maxAlpha-.30)*f*f;
     ctx.beginPath();ctx.moveTo(tf.X(a.x),tf.Y(a.y));ctx.lineTo(tf.X(b.x),tf.Y(b.y));
-    ctx.strokeStyle=rgba(col,alpha);ctx.lineWidth=width*(.45+.55*f*f);ctx.stroke();}
+    ctx.strokeStyle=rgba(col,alpha);ctx.lineWidth=width*(.70+.30*f*f);ctx.stroke();}
   if(!waypoints)return;
   for(const it of route.interactions){const q=routePointAt(route,it.t);if(!q)continue;
     const x=tf.X(q.x),y=tf.Y(q.y);it._sx=x;it._sy=y;
@@ -310,8 +377,8 @@ function drawRoute(route,col,maxAlpha,width,waypoints){
 }
 function drawRoutes(){
   const palette=[C.primary,C.personA,C.personB,C.ok,C.flag];
-  branchRoutes.forEach((route,i)=>drawRoute(route,palette[i%palette.length],.52,1.7,false));
-  if(selectedRoute)drawRoute(selectedRoute,C.accent,.68,2.6,true);
+  branchRoutes.forEach((route,i)=>drawRoute(route,palette[i%palette.length],.64,1.8,false));
+  if(selectedRoute)drawRoute(selectedRoute,C.accent,.88,2.8,true);
   if(hoveredInteraction&&selectedRoute){const a=routePointAt(selectedRoute,hoveredInteraction.t);if(a){
     for(const rel of hoveredInteraction.related){const route=branchRoutes.find(r=>r.gid===rel.gid),b=routePointAt(route,hoveredInteraction.t);if(!b)continue;
       ctx.beginPath();ctx.moveTo(tf.X(a.x),tf.Y(a.y));ctx.lineTo(tf.X(b.x),tf.Y(b.y));
@@ -323,10 +390,12 @@ function drawRoutes(){
 function drawEntities(t){
   const now=performance.now();
   for(const[id,e]of ents){
-    const a=Math.min(1,(now-e.t)/380);           // interpolate between frames
-    const wx=e.px+(e.tx-e.px)*a, wy=e.py+(e.ty-e.py)*a;let x=tf.X(wx),y=tf.Y(wy);
+    const meta=gidOf.get(id),gid=meta?.gid||'';if(!entityVisible(gid)){e._hidden=true;e._sx=e._sy=null;continue;}e._hidden=false;
+    let wx,wy;if(staticDemo&&e.staticTrack){const st=staticNow()%STATIC_DURATION,p=routePointAt({points:e.staticTrack.points},st)||e.staticTrack.points[e.staticTrack.points.length-1];wx=p.x;wy=p.y;}
+    else{const a=Math.min(1,(now-e.t)/(e.lerpMs||380));wx=e.px+(e.tx-e.px)*a;wy=e.py+(e.ty-e.py)*a;}
+    let x=tf.X(wx),y=tf.Y(wy);
     const lost=e.flags&F_LOST, sel=(e.flags&F_SELECTED)||id===selectedId, aband=e.flags&F_ABANDONED;
-    const meta=gidOf.get(id),gid=meta?.gid||'',col=entityColor(gid,e.kind),threat=threatLevel(gid,e);
+    const threat=threatLevel(gid,e),col=entityColor(gid,e.kind,threat);
     // A carried item shares its custodian's world coordinate. A tiny screen-space offset
     // keeps both the person and object selectable and lets both threat rings stay legible.
     if(e.kind===1&&(e.flags&F_CARRIED)){x+=5;y-=5;}
@@ -376,23 +445,26 @@ let pan=null,suppressClick=false;
 cv.addEventListener('wheel',e=>{e.preventDefault();const r=cv.getBoundingClientRect();zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*.0014));
   document.querySelectorAll('[data-wing]').forEach(b=>b.classList.remove('on'));document.getElementById('wingname').textContent='Custom terminal view';
 },{passive:false});
-cv.addEventListener('mousedown',e=>{if(!(e.shiftKey||e.button===1||e.button===2))return;e.preventDefault();
-  pan={x:e.clientX,y:e.clientY,cx:view.cx,cy:view.cy};suppressClick=false;});
-addEventListener('mousemove',e=>{if(!pan||!tf)return;const dx=e.clientX-pan.x,dy=e.clientY-pan.y;if(Math.abs(dx)+Math.abs(dy)>3)suppressClick=true;
+cv.addEventListener('mousedown',e=>{if(![0,1,2].includes(e.button))return;e.preventDefault();
+  pan={x:e.clientX,y:e.clientY,cx:view.cx,cy:view.cy,active:false};suppressClick=false;});
+addEventListener('mousemove',e=>{if(!pan||!tf)return;const dx=e.clientX-pan.x,dy=e.clientY-pan.y;
+  if(!pan.active&&Math.hypot(dx,dy)<=3)return;pan.active=true;suppressClick=true;cv.style.cursor='grabbing';hud.classList.remove('on');
   view.cx=pan.cx-dx/tf.s;view.cy=pan.cy-dy/tf.s;fit();});
-addEventListener('mouseup',()=>{pan=null;});
+addEventListener('mouseup',()=>{if(pan?.active)cv.style.cursor='grab';pan=null;});
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{const action=b.dataset.view;if(action==='reset')setWing(activeWing,true);
   else zoomAt(W/2,H/2,action==='in'?1.35:1/1.35);});
 cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;
+  if(pan?.active)return;
   hover=hitInteraction(mx,my);let bd=12;
-  if(!hover)for(const[id,en]of ents){if(en._sx==null)continue;const d=Math.hypot(en._sx-mx,en._sy-my);if(d<bd){bd=d;hover={id,ent:en};}}
+  if(!hover)for(const[id,en]of ents){if(en._hidden||en._sx==null)continue;const d=Math.hypot(en._sx-mx,en._sy-my);if(d<bd){bd=d;hover={id,ent:en};}}
   if(!hover)hover=hitRoute(mx,my);
   if(!hover){let cd=13;for(const cam of fac.sensors){const d=Math.hypot(tf.X(cam.pose.x)-mx,tf.Y(cam.pose.y)-my);if(d<cd){cd=d;hover=cam;}}}
+  if(!hover&&fac.campus){let pd=14;for(const plane of fac.campus.planes){const d=Math.hypot(plane._sx-mx,plane._sy-my);if(d<pd){pd=d;hover={plane};}}}
   if(!hover&&tf){const wx=(mx-tf.ox)/tf.s,wy=(my-tf.oy)/tf.s;for(const z of fac.zones){if(pip(wx,wy,z.polygon)){hover=z;break;}}}
   const nextInteraction=hover?.type==='interaction'?hover.interaction:null;
   if(nextInteraction?.key!==hoveredInteraction?.key){hoveredInteraction=nextInteraction;revealBranches(nextInteraction);}
-  cv.style.cursor=hover?.ent||nextInteraction?'pointer':'crosshair';
+  cv.style.cursor=hover?.ent||nextInteraction?'pointer':'grab';
   if(!hover){hud.classList.remove('on');return;}
   hud.classList.add('on');hud.style.left=(mx+14)+'px';hud.style.top=(my+14)+'px';
   if(hover.type==='trail'){hud.innerHTML=`<div class="t">${esc(hover.gid)} path</div><span class="k">time</span> t${fmt(hover.t)}s`+
@@ -405,6 +477,7 @@ cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();const mx=
     const st=[];if(e.flags&F_ABANDONED)st.push('ABANDONED');if(e.flags&F_CARRIED)st.push('carried');if(e.flags&F_PLACED)st.push('placed');if(e.flags&F_LOST)st.push('lost');
     hud.innerHTML=`<div class="t">${kn} #${hover.id}</div><span class="k">pos</span> ${(e.px+(e.tx-e.px)).toFixed?'' :''}`+
       `${e.tx.toFixed(1)}, ${e.ty.toFixed(1)} m`+(st.length?`<br><span class="k">state</span> ${st.join(' · ')}`:'');}
+  else if(hover.plane){hud.innerHTML=`<div class="t">${hover.plane.id}</div><span class="k">aircraft</span> ${hover.plane.parked?'at stand':'taxiing · live simulation'}`;}
   else if(hover.pose){hud.innerHTML=`<div class="t">${hover.id}</div>${hover.name||''}<br><span class="k">hfov</span> ${hover.hfov_deg}° · <span class="k">range</span> ${hover.max_range_m} m`;}
   else{hud.innerHTML=`<div class="t">${hover.name||hover.id}</div><span class="k">zone</span> ${hover.kind}`;}
 });
@@ -416,7 +489,7 @@ cv.addEventListener('click',e=>{
   const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
   const junction=hitInteraction(mx,my);if(junction){followRelated(junction.interaction.related[0]);return;}
   let best=null,bd=14;
-  for(const[id,en]of ents){if(en._sx==null)continue;const d=Math.hypot(en._sx-mx,en._sy-my);if(d<bd){bd=d;best=id;}}
+  for(const[id,en]of ents){if(en._hidden||en._sx==null)continue;const d=Math.hypot(en._sx-mx,en._sy-my);if(d<bd){bd=d;best=id;}}
   if(best==null){closeDossier();return;}
   selectTrack(best);
 });
@@ -456,40 +529,61 @@ addStaticTrack('SEC-1','person',sampled([[0,12,55],[30,25,50],[58,30,43],[64,30,
   ev(60,'item_touch','SEC-1','person','BAG-1','item',{item:'BAG-1',authorised:true})],{staff:true,screened:true});
 addStaticTrack('SEC-2','person',sampled([[0,60,50],[35,48,43],[70,62,43],[105,48,55],[140,48,55]]),[
   ev(52,'proximity','SEC-2','person','WB-1','person',{authorised:true})],{staff:true,screened:true});
-addStaticTrack('SEC-3','person',sampled([[0,106,54],[30,92,43],[70,105,43],[110,112,55],[140,112,55]]),[
+addStaticTrack('SEC-3','person',sampled([[0,286,54],[30,302,43],[70,318,43],[110,344,55],[140,344,55]]),[
   ev(68,'item_touch','SEC-3','person','CASE-C','item',{item:'CASE-C',authorised:true})],{staff:true,screened:true});
-addStaticTrack('WB-1','person',sampled([[0,45,10],[35,53,28],[70,50,50],[105,62,58],[140,62,58]]),[
-  ev(52,'proximity','WB-1','person','SEC-2','person',{})]);
-addStaticTrack('WB-2','person',sampled([[0,74,12],[30,68,29],[65,72,48],[100,57,58],[140,57,58]]),[
+addStaticTrack('WB-1','person',sampled([[0,145,10],[35,166,28],[70,182,50],[105,214,58],[140,214,58]]),[
+  ev(52,'proximity','WB-1','person','WB-2','person',{})]);
+addStaticTrack('WB-2','person',sampled([[0,244,12],[30,218,29],[65,232,48],[100,197,58],[140,197,58]]),[
   ev(48,'group_form','WB-2','person','WB-1','person',{members:['WB-1','WB-2']})]);
-addStaticTrack('WC-1','person',sampled([[0,116,8],[28,101,24],[58,96,43],[90,108,58],[140,108,58]]),[
+addStaticTrack('WC-1','person',sampled([[0,386,8],[28,361,24],[58,336,43],[90,348,58],[140,348,58]]),[
   ev(72,'item_pickup','WC-1','person','CASE-C','item',{item:'CASE-C'})]);
-addStaticTrack('CASE-C','item',sampled([[0,104,43],[72,104,43],[90,108,58],[140,108,58]]),[
+addStaticTrack('CASE-C','item',sampled([[0,334,43],[72,334,43],[90,348,58],[140,348,58]]),[
   ev(68,'item_touch','SEC-3','person','CASE-C','item',{item:'CASE-C',authorised:true}),ev(72,'item_pickup','WC-1','person','CASE-C','item',{item:'CASE-C'})]);
+// A terminal should read as a terminal, not a sparse test fixture. These deterministic
+// travellers move on smooth, phase-shifted paths across all three wings; the traffic
+// control changes how many are visible without touching the A/B security story.
+for(let i=0;i<72;i++){const points=[],wing=i%3,cx=[22,60,98][wing],phase=i*1.731,
+    ax=9+(i%7),baseY=11+(i*13)%45,ay=2.2+(i%5)*.65,omega=.018+(i%4)*.0025;
+  for(let t=0;t<=STATIC_DURATION;t+=.5)points.push({t,x:Math.max(3,Math.min(117,cx+ax*Math.sin(phase+t*omega))),
+    y:Math.max(8,Math.min(61,baseY+ay*Math.sin(phase*.7+t*(omega*1.7)))),cameras:[]});
+  const partner='C'+((i+1)%72),events=i%9===0?[ev(34+(i%5)*8,'proximity','C'+i,'person',partner,'person',{})]:[];
+  addStaticTrack('C'+i,'person',points,events);}
+function addCampusCrowd(prefix,count,bounds){const[x0,y0,x1,y1]=bounds;
+  for(let i=0;i<count;i++){const points=[],phase=(i+prefix.length*7)*1.417,cx=x0+8+((i*19)%(Math.max(16,x1-x0-16))),
+      cy=y0+8+((i*11)%(Math.max(14,y1-y0-16))),ax=4+(i%6),ay=2+(i%4),omega=.016+(i%5)*.002;
+    for(let t=0;t<=STATIC_DURATION;t+=.5)points.push({t,x:Math.max(x0+3,Math.min(x1-3,cx+ax*Math.sin(phase+t*omega))),
+      y:Math.max(y0+3,Math.min(y1-3,cy+ay*Math.sin(phase*.8+t*omega*1.6))),cameras:[]});
+    const gid=prefix+'C'+i,partner=prefix+'C'+((i+1)%count),events=i%8===0?[ev(28+(i%6)*9,'proximity',gid,'person',partner,'person',{})]:[];
+    addStaticTrack(gid,'person',points,events);}}
+addCampusCrowd('T2-',34,[134,4,260,76]);addCampusCrowd('T3-',34,[274,4,398,76]);
+addCampusCrowd('N-',28,[52,82,210,164]);addCampusCrowd('I-',42,[220,82,395,164]);
 STATIC_CUSTODY.set('BAG-1',[
   {t:0,type:'item_pickup',person:'A',attrs:{}},{t:40,type:'item_drop',person:'A',attrs:{}},
   {t:80.4,type:'item_transfer',person_from:'A',person_to:'B',person:'B',attrs:{from:'A',to:'B'}}]);
 STATIC_CUSTODY.set('CASE-C',[{t:72,type:'item_pickup',person:'WC-1',attrs:{}}]);
 const STATIC_FLAGS=[
-  {t:18,pattern:'P9',name:'Sterile-boundary observation',severity:'note',entities:['WB-2'],wing:'wing-b',reason:'Wing B · screened boundary transit recorded.'},
+  {t:18,pattern:'P9',name:'Sterile-boundary observation',severity:'note',entities:['WB-2'],wing:'terminal-2',reason:'Terminal 2 · screened boundary transit recorded.'},
   {t:40.4,pattern:'P17',name:'Placed item',severity:'flag',entities:['A'],item:'BAG-1',wing:'wing-a',reason:'A placed BAG-1 at a covered seat — orange monitoring started.'},
-  {t:54,pattern:'P5',name:'Coverage gap',severity:'note',entities:['WC-1'],wing:'wing-c',reason:'Wing C · short coverage gap resolved at the east gates.'},
+  {t:54,pattern:'P5',name:'Coverage gap',severity:'note',entities:['WC-1'],wing:'terminal-3',reason:'Terminal 3 · short coverage gap resolved at the regional gates.'},
   {t:60,pattern:'AUDIT',name:'Authorised contact',severity:'note',entities:['SEC-1'],item:'BAG-1',wing:'wing-a',reason:'Security team contact recorded; authorised staff interaction did not alert.'},
   {t:70.4,pattern:'P1',name:'Abandoned item',severity:'flag',entities:['A'],item:'BAG-1',wing:'wing-a',reason:'BAG-1 remained unattended — orange abandonment alert.'},
-  {t:72,pattern:'P21',name:'Object handling',severity:'flag',entities:['WC-1'],item:'CASE-C',wing:'wing-c',reason:'Wing C · unattended case interaction requires review.'},
+  {t:72,pattern:'P21',name:'Object handling',severity:'flag',entities:['WC-1'],item:'CASE-C',wing:'terminal-3',reason:'Terminal 3 · unattended case interaction requires review.'},
   {t:80.4,pattern:'P2',name:'Non-owner pickup',severity:'red-flag',entities:['A','B'],item:'BAG-1',wing:'wing-a',reason:'B took BAG-1 from A with no prior proximity or group edge.'}
 ];
 function staticNow(){return staticAt+(performance.now()-staticWall)/1000*simulationSpeed;}
 function setStaticSpeed(speed){const now=staticNow();staticAt=now;staticWall=performance.now();setSpeedUI(speed);}
-function resetStaticCycle(){feed.innerHTML='';alertRows.length=0;orangeTracked.clear();redTracked.clear();staticFlagIndex=0;autoOverviewAt=null;autoOverviewDone=false;setWing('wing-a');
+function resetStaticCycle(){feed.innerHTML='';alertRows.length=0;orangeTracked.clear();redTracked.clear();staticFlagIndex=0;autoOverviewAt=null;autoOverviewDone=false;closeDossier();setWing('wing-a');
   addNotice('Public showcase replay · same scenario contract, running entirely in this browser.');}
 function updateStatic(){let raw=staticNow(),cycle=Math.floor(raw/STATIC_DURATION),t=raw-cycle*STATIC_DURATION;
   if(t<simT||!Number.isFinite(simT))resetStaticCycle();simT=t;document.getElementById('simt').textContent=t.toFixed(1);
-  let np=0,ni=0;STATIC_TRACKS.forEach((track,id)=>{if(t<track.points[0].t){ents.delete(id+1);return;}const p=routePointAt({points:track.points},t)||track.points[track.points.length-1];
+  STATIC_TRACKS.forEach((track,id)=>{if(t<track.points[0].t){ents.delete(id+1);return;}const p=routePointAt({points:track.points},t)||track.points[track.points.length-1];
     let flags=track.kind==='item'?(track.gid==='BAG-1'?(t<40||t>=80?F_CARRIED:t>=70.4?F_ABANDONED:F_PLACED):(t>=72?F_CARRIED:F_PLACED)):0;
-    const old=ents.get(id+1),now=performance.now();if(old){old.px=old.tx;old.py=old.ty;old.tx=p.x;old.ty=p.y;old.t=now;old.flags=flags;}
-    else ents.set(id+1,{px:p.x,py:p.y,tx:p.x,ty:p.y,t:now,flags,kind:track.kind==='item'?1:0});track.kind==='item'?ni++:np++;});
-  document.getElementById('npers').textContent=np;document.getElementById('nitem').textContent=ni;document.getElementById('ngrp').textContent=0;
+    const old=ents.get(id+1),now=performance.now();if(old){old.tx=p.x;old.ty=p.y;old.t=now;old.flags=flags;old.staticTrack=track;}
+    else ents.set(id+1,{px:p.x,py:p.y,tx:p.x,ty:p.y,t:now,lerpMs:60,flags,kind:track.kind==='item'?1:0,staticTrack:track});});
+  if(selectedRoute&&selectedGid){const d=STATIC_TIMELINES.get(selectedGid),rows=(STATIC_CUSTODY.get(selectedGid)||[]).filter(r=>r.t<=t);
+    if(d){selectedRoute.points=d.tracks.filter(p=>p.t<=t).map(p=>({t:p.t,x:p.x,y:p.y}));const nowp=routePointAt({points:d.tracks},t);
+      if(nowp&&selectedRoute.points.at(-1)?.t<t)selectedRoute.points.push({t,x:nowp.x,y:nowp.y});selectedRoute.interactions=buildInteractions(selectedGid,d.events.filter(e=>e.t<=t),rows);}}
+  refreshCounts();
   while(staticFlagIndex<STATIC_FLAGS.length&&STATIC_FLAGS[staticFlagIndex].t<=t)addAlert(STATIC_FLAGS[staticFlagIndex++]);
   if(!autoOverviewDone&&autoOverviewAt!=null&&t>=autoOverviewAt){autoOverviewDone=true;setWing('terminal');addNotice('Scenario complete · terminal overview opened for wing selection.');}}
 function activateStaticDemo(){if(staticDemo)return;staticDemo=true;const params=new URLSearchParams(location.search),start=Math.max(0,Math.min(STATIC_DURATION-.1,Number(params.get('t'))||0));
@@ -497,11 +591,13 @@ function activateStaticDemo(){if(staticDemo)return;staticDemo=true;const params=
   STATIC_TRACKS.forEach((track,id)=>{gidOf.set(id+1,{gid:track.gid,kind:track.kind,attrs:track.attrs});if(track.attrs.staff)staffGids.add(track.gid);});
   const chip=document.getElementById('livechip');chip.textContent='live replay';chip.classList.add('on');document.getElementById('wsst').innerHTML='<b>mode:</b> self-contained public demo';
   document.getElementById('modecopy').innerHTML='<b>verified scenario</b> · self-contained replay';
-  addNotice('Public showcase replay · same scenario contract, running entirely in this browser.');staticTimer=setInterval(updateStatic,100);updateStatic();}
+  addNotice('Public showcase replay · same scenario contract, running entirely in this browser.');staticTimer=setInterval(updateStatic,50);updateStatic();}
 
-function timelineFor(gid){if(staticDemo)return Promise.resolve(STATIC_TIMELINES.get(gid)||{gid,tracks:[],events:[]});if(!timelineCache.has(gid))timelineCache.set(gid,fetch('/history/person/'+encodeURIComponent(gid),{cache:'no-store'})
+function timelineFor(gid){if(staticDemo){const d=STATIC_TIMELINES.get(gid)||{gid,tracks:[],events:[]},now=Number.isFinite(simT)?simT:0;
+  const tracks=d.tracks.filter(p=>p.t<=now),nowp=routePointAt({points:d.tracks},now);if(nowp&&tracks.at(-1)?.t<now)tracks.push({t:now,x:nowp.x,y:nowp.y,cameras:[]});
+  return Promise.resolve({gid,tracks,events:d.events.filter(e=>e.t<=now)});}if(!timelineCache.has(gid))timelineCache.set(gid,fetch('/history/person/'+encodeURIComponent(gid),{cache:'no-store'})
   .then(r=>{if(!r.ok)throw Error(r.status+' '+r.statusText);return r.json();}));return timelineCache.get(gid);}
-function custodyFor(gid){if(staticDemo)return Promise.resolve(STATIC_CUSTODY.get(gid)||[]);if(!custodyCache.has(gid))custodyCache.set(gid,fetch('/history/item/'+encodeURIComponent(gid),{cache:'no-store'})
+function custodyFor(gid){if(staticDemo)return Promise.resolve((STATIC_CUSTODY.get(gid)||[]).filter(r=>r.t<=(Number.isFinite(simT)?simT:0)));if(!custodyCache.has(gid))custodyCache.set(gid,fetch('/history/item/'+encodeURIComponent(gid),{cache:'no-store'})
   .then(r=>{if(!r.ok)throw Error(r.status+' '+r.statusText);return r.json();}));return custodyCache.get(gid);}
 function interactionRelated(gid,e){const out=new Map(),add=(v,k)=>{if(typeof v!=='string'||!v||v===gid)return;
   const kind=['person','item','group'].includes(k)?k:'unknown';if(!out.has(v)||out.get(v)==='unknown')out.set(v,kind);};
@@ -660,8 +756,9 @@ function connect(){
       const id=dv.getUint32(off,true),x=dv.getFloat32(off+4,true),y=dv.getFloat32(off+8,true),fl=dv.getUint16(off+12,true);
       const kind=fl&0x3;seen.add(id);if(kind===0)np++;else if(kind===1)ni++;else if(kind===2)ng++;
       let e=ents.get(id);
-      if(!e){e={px:x,py:y,tx:x,ty:y,t:now,flags:fl,kind};ents.set(id,e);}
-      else{const a=Math.min(1,(now-e.t)/380);e.px=e.px+(e.tx-e.px)*a;e.py=e.py+(e.ty-e.py)*a;e.tx=x;e.ty=y;e.t=now;e.flags=fl;e.kind=kind;}
+      if(!e){e={px:x,py:y,tx:x,ty:y,t:now,lerpMs:180,flags:fl,kind};ents.set(id,e);}
+      else{const elapsed=now-e.t,a=Math.min(1,elapsed/(e.lerpMs||380));e.px=e.px+(e.tx-e.px)*a;e.py=e.py+(e.ty-e.py)*a;
+        e.tx=x;e.ty=y;e.t=now;e.lerpMs=Math.max(80,Math.min(420,elapsed*.90));e.flags=fl;e.kind=kind;}
       if(id===selectedId&&selectedRoute&&selectedRoute.gid===selectedGid&&Number.isFinite(simT)){
         const p=selectedRoute.points,last=p[p.length-1],dx=last?x-last.x:Infinity,dy=last?y-last.y:Infinity;
         if(!last||simT>=last.t){if(!last||dx*dx+dy*dy>.04)p.push({t:simT,x,y});else last.t=simT;}
@@ -669,9 +766,7 @@ function connect(){
     }
     for(const id of[...ents.keys()])if(!seen.has(id))ents.delete(id);
     document.getElementById('simt').textContent='…';
-    document.getElementById('npers').textContent=np;
-    document.getElementById('nitem').textContent=ni;
-    document.getElementById('ngrp').textContent=ng;
+    refreshCounts();
   };
 }
 
@@ -680,7 +775,7 @@ let flagCursor=0;const feed=document.getElementById('feed'),alertRows=[];
 let autoOverviewAt=null,autoOverviewDone=false;
 function alertWing(f){if(f.wing)return f.wing;const actors=[...(f.entities||[]),f.item].filter(Boolean).map(baseGid);
   if(actors.some(g=>g==='A'||g==='B'||g==='BAG-1'))return'wing-a';
-  const z=fac?.zones?.find(z=>z.id===f.zone);if(z?.polygon?.length){const x=z.polygon.reduce((s,p)=>s+p[0],0)/z.polygon.length;return wingForX(x);}
+  const z=fac?.zones?.find(z=>z.id===f.zone);if(z?.polygon?.length){const x=z.polygon.reduce((s,p)=>s+p[0],0)/z.polygon.length,y=z.polygon.reduce((s,p)=>s+p[1],0)/z.polygon.length;return wingForPoint(x,y);}
   return activeWing==='terminal'?'wing-a':activeWing;}
 function applyAlertFilter(){const visible=visibleWingIds(),counts={note:0,flag:0,'red-flag':0};
   for(const row of alertRows){const show=row.global||eventScope==='all'||visible.has(row.wing);row.el.hidden=!show;if(show&&!row.global)counts[row.severity]=(counts[row.severity]||0)+1;}
@@ -741,14 +836,15 @@ function showBanner(f){const b=document.getElementById('banner');document.getEle
 // ---- facility + legend ----
 async function loadFacility(){
   const facilityUrl=(location.hostname==='airsec.akeyo.io'||location.hostname.endsWith('.github.io'))?'./data/facility/terminal.json':'/data/facility/terminal.json';
-  const r=await fetch(facilityUrl,{cache:'no-store'});fac=await r.json();fit();configureWings();setWing('wing-a');
+  const r=await fetch(facilityUrl,{cache:'no-store'});fac=await r.json();if(staticPreferred)fac=extendAirport(fac);fit();configureWings();setWing('wing-a');
   document.getElementById('facname').textContent=fac.name+' · '+fac.width_m+'×'+fac.height_m+' m · '+fac.sensors.length+' cams';
   const kinds=[...new Set(fac.zones.map(z=>z.kind))];const L=document.getElementById('legend');
   L.innerHTML=`<span><i style="background:${C.personA}"></i>person A</span><span><i style="background:${C.personB}"></i>person B</span>`+
-    `<span><i style="background:${C.ok}"></i>security team</span><span><i style="background:${C.redflag};transform:rotate(45deg)"></i>BAG-1</span>`+
+    `<span><i style="background:${C.ok}"></i>security team</span><span><i style="background:${C.bagBlue};transform:rotate(45deg)"></i>BAG-1 · monitored</span>`+
+    `<span><i style="background:${C.flag}"></i>orange alert</span><span><i style="background:${C.redflag}"></i>red alert</span>`+
     `<span><i style="background:${C.primaryDim}"></i>camera coverage</span>`+
     `<span><i style="height:3px;background:${C.accent}"></i>tracked full path</span><span><i style="border-radius:50%;background:${C.flag}"></i>event</span>`+
-    `<span><i style="height:3px;background:${C.primary}"></i>related branch</span>`+
+    `<span><i style="height:3px;background:${C.primary}"></i>related branch</span>`+(fac.campus?`<span><i style="background:${C.ink};clip-path:polygon(100% 50%,30% 35%,15% 0,0 0,12% 42%,0 45%,0 55%,12% 58%,0 100%,15% 100%,30% 65%)"></i>aircraft</span>`:'')+
     kinds.filter(k=>k!=='blindspot').map(k=>`<span><i style="background:${rgba(ZONE_COLOR[k]||C.muted,.6)}"></i>${k}</span>`).join('')+
     `<span><i style="background:rgba(0,0,0,.6);border:1px solid ${C.hairline}"></i>blindspot</span>`;
 }
@@ -765,8 +861,10 @@ function initSpeedControls(){const speeds=[.25,.5,1,2,4],box=document.getElement
     if(staticDemo){setStaticSpeed(speed);return;}
     try{const r=await fetch('/demo/speed?speed='+speed,{method:'POST'});if(!r.ok)throw Error('HTTP '+r.status);const j=await r.json();setSpeedUI(j.simulation_speed);}
     catch(e){setTrackState('speed control unavailable · '+e.message,true);}});setSpeedUI(1);}
+function initTrafficControl(){const input=document.getElementById('traffic'),out=document.getElementById('trafficout');
+  const apply=()=>{trafficLimit=Number(input.value);out.value=trafficLimit+' / zone';refreshCounts();};input.addEventListener('input',apply);apply();}
 
-initSpeedControls();loadFacility().then(()=>{fit();draw();connect();});
+initSpeedControls();initTrafficControl();loadFacility().then(()=>{fit();draw();connect();});
 setInterval(pollFlags,900);
 setInterval(tickInfo,900);
 // hot-reload this page if the file changes on disk
