@@ -659,34 +659,27 @@ addEventListener('mousemove',e=>{if(!pan||!tf)return;const dx=e.clientX-pan.x,dy
 addEventListener('mouseup',()=>{if(pan?.active)cv.style.cursor='grab';pan=null;});
 // One-finger pan + two-finger pinch for the field layout. Desktop keeps its exact mouse
 // behavior above; touch uses pointer capture so a finger may leave the canvas mid-gesture.
-const touchPoints=new Map();let pinch=null;
+const touchPoints=new Map();let pinch=null,pendingTouchTap=null;
 const touchPair=()=>{const p=[...touchPoints.values()];if(p.length<2)return null;return{x:(p[0].x+p[1].x)/2,y:(p[0].y+p[1].y)/2,d:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y)};};
 cv.addEventListener('pointerdown',e=>{if(e.pointerType!=='touch')return;cv.setPointerCapture?.(e.pointerId);touchPoints.set(e.pointerId,{x:e.clientX,y:e.clientY});
-  if(touchPoints.size===1){pan={x:e.clientX,y:e.clientY,cx:view.cx,cy:view.cy,active:false,pointerId:e.pointerId};suppressClick=false;}
+  if(touchPoints.size===1){pendingTouchTap=null;pan={x:e.clientX,y:e.clientY,cx:view.cx,cy:view.cy,active:false,pointerId:e.pointerId};suppressClick=false;}
   else{pinch=touchPair();pan=null;suppressClick=true;hud.classList.remove('on');}});
 cv.addEventListener('pointermove',e=>{if(e.pointerType!=='touch'||!touchPoints.has(e.pointerId)||!tf)return;touchPoints.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(touchPoints.size>1){const next=touchPair();if(!next||!pinch)return;const r=cv.getBoundingClientRect(),mx=next.x-r.left,my=next.y-r.top;
     view.cx-=(next.x-pinch.x)/tf.s;view.cy-=(next.y-pinch.y)/tf.s;fit();zoomAt(mx,my,next.d/Math.max(1,pinch.d));pinch=next;suppressClick=true;return;}
   if(!pan||pan.pointerId!==e.pointerId)return;const dx=e.clientX-pan.x,dy=e.clientY-pan.y;if(!pan.active&&Math.hypot(dx,dy)<=7)return;
   pan.active=true;suppressClick=true;view.cx=pan.cx-dx/tf.s;view.cy=pan.cy-dy/tf.s;fit();});
-const endTouch=e=>{if(e.pointerType!=='touch')return;touchPoints.delete(e.pointerId);pinch=touchPair();
+const endTouch=(e,cancelled=false)=>{if(e.pointerType!=='touch')return;
+  if(!cancelled&&touchPoints.size===1&&pan?.pointerId===e.pointerId&&!pan.active&&!suppressClick)
+    pendingTouchTap={x:e.clientX,y:e.clientY,at:performance.now()};
+  touchPoints.delete(e.pointerId);pinch=touchPair();
   if(touchPoints.size===1){const [id,p]=touchPoints.entries().next().value;pan={x:p.x,y:p.y,cx:view.cx,cy:view.cy,active:false,pointerId:id};}
   else if(!touchPoints.size)pan=null;};
-cv.addEventListener('pointerup',endTouch);cv.addEventListener('pointercancel',endTouch);
+cv.addEventListener('pointerup',e=>endTouch(e));cv.addEventListener('pointercancel',e=>endTouch(e,true));
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{const action=b.dataset.view;if(action==='reset')setWing(activeWing,true);
   else zoomAt(W/2,H/2,action==='in'?1.35:1/1.35);});
-cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;
-  if(pan?.active)return;
-  const interactionHit=hitInteraction(mx,my),branchHit=interactionHit?null:hitBranchRoute(mx,my);hover=interactionHit||branchHit;let bd=12;
-  if(!hover)for(const[id,en]of ents){if(en._hidden||en._sx==null)continue;const d=Math.hypot(en._sx-mx,en._sy-my);if(d<bd){bd=d;hover={id,ent:en};}}
-  if(!hover)hover=hitRoute(mx,my);
-  if(!hover){let cd=13;for(const cam of fac.sensors){const d=Math.hypot(tf.X(cam.pose.x)-mx,tf.Y(cam.pose.y)-my);if(d<cd){cd=d;hover=cam;}}}
-  if(!hover&&fac.campus){let pd=14;for(const plane of fac.campus.planes){const d=Math.hypot(plane._sx-mx,plane._sy-my);if(d<pd){pd=d;hover={plane};}}}
-  if(!hover&&tf){const wx=(mx-tf.ox)/tf.s,wy=(my-tf.oy)/tf.s;for(const z of fac.zones){if(pip(wx,wy,z.polygon)){hover=z;break;}}}
-  const nextInteraction=interactionHit?.interaction||(branchHit?hoveredInteraction:null);
-  if(nextInteraction?.key!==hoveredInteraction?.key){hoveredInteraction=nextInteraction;revealBranches(nextInteraction);}
-  cv.style.cursor=hover?.ent||nextInteraction||hover?.type==='branch'?'pointer':'grab';
+function showHoverHud(mx,my){
   if(!hover){hud.classList.remove('on');return;}
   hud.classList.add('on');hud.style.left=(mx+14)+'px';hud.style.top=(my+14)+'px';
   if(hover.type==='trail'){hud.innerHTML=`<div class="t">${esc(hover.gid)} path</div><span class="k">time</span> t${fmt(hover.t)}s`+
@@ -707,17 +700,35 @@ cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();const mx=
   else if(hover.plane){hud.innerHTML=`<div class="t">${hover.plane.id}</div><span class="k">aircraft</span> ${hover.plane.parked?'at stand':'taxiing · live simulation'}`;}
   else if(hover.pose){hud.innerHTML=`<div class="t">${hover.id}</div>${hover.name||''}<br><span class="k">hfov</span> ${hover.hfov_deg}° · <span class="k">range</span> ${hover.max_range_m} m`;}
   else{hud.innerHTML=`<div class="t">${hover.name||hover.id}</div><span class="k">zone</span> ${hover.kind}`;}
+}
+cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;
+  if(pan?.active)return;
+  const interactionHit=hitInteraction(mx,my),branchHit=interactionHit?null:hitBranchRoute(mx,my);hover=interactionHit||branchHit;let bd=12;
+  if(!hover)for(const[id,en]of ents){if(en._hidden||en._sx==null)continue;const d=Math.hypot(en._sx-mx,en._sy-my);if(d<bd){bd=d;hover={id,ent:en};}}
+  if(!hover)hover=hitRoute(mx,my);
+  if(!hover){let cd=13;for(const cam of fac.sensors){const d=Math.hypot(tf.X(cam.pose.x)-mx,tf.Y(cam.pose.y)-my);if(d<cd){cd=d;hover=cam;}}}
+  if(!hover&&fac.campus){let pd=14;for(const plane of fac.campus.planes){const d=Math.hypot(plane._sx-mx,plane._sy-my);if(d<pd){pd=d;hover={plane};}}}
+  if(!hover&&tf){const wx=(mx-tf.ox)/tf.s,wy=(my-tf.oy)/tf.s;for(const z of fac.zones){if(pip(wx,wy,z.polygon)){hover=z;break;}}}
+  const nextInteraction=interactionHit?.interaction||(branchHit?hoveredInteraction:null);
+  if(nextInteraction?.key!==hoveredInteraction?.key){hoveredInteraction=nextInteraction;revealBranches(nextInteraction);}
+  cv.style.cursor=hover?.ent||nextInteraction||hover?.type==='branch'?'pointer':'grab';
+  showHoverHud(mx,my);
 });
 cv.addEventListener('mouseleave',e=>{hover=null;hud.classList.remove('on');if(branchMenu.classList.contains('on')&&branchMenu.contains(e.relatedTarget))return;
   hoveredInteraction=null;revealBranches(null);});
 
 // ---- click to select -> dossier (the vision's core interaction) ----
 cv.addEventListener('click',e=>{
+  const touchTap=(!!pendingTouchTap&&performance.now()-pendingTouchTap.at<750)||
+    e.pointerType==='touch'||e.sourceCapabilities?.firesTouchEvents===true;pendingTouchTap=null;
   if(suppressClick){suppressClick=false;return;}
   const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
-  const junction=hitInteraction(mx,my);if(junction){if(junction.interaction.related.length===1)followRelated(junction.interaction.related[0]);
+  const junction=hitInteraction(mx,my);if(junction){
+    if(touchTap){hoveredInteraction=junction.interaction;hover=junction;revealBranches(junction.interaction);showHoverHud(mx,my);}
+    if(junction.interaction.related.length===1)followRelated(junction.interaction.related[0]);
     else showBranchMenu(junction.interaction,junction.sx,junction.sy);return;}
   const branch=hitBranchRoute(mx,my);if(branch){closeBranchMenu();followRelated({gid:branch.gid,kind:branch.kind});return;}
+  if(touchTap){const trail=hitRoute(mx,my);if(trail){hover=trail;showHoverHud(mx,my);return;}}
   closeBranchMenu();
   let best=null,bd=coarsePointer?24:14;
   for(const[id,en]of ents){if(en._hidden||en._sx==null)continue;const d=Math.hypot(en._sx-mx,en._sy-my);if(d<bd){bd=d;best=id;}}
