@@ -1,0 +1,11 @@
+#project v1
+slug: airsec-preview
+status: published
+version: 1
+repo: https://github.com/fire17/AirSecPreview
+first_shipped: 2026-08-17
+last_shipped: 2026-08-17
+channels: github-pages https://airsec.akeyo.io
+---
+Selective AirSec preview deployment. The production source repository remains private and
+is not copied here; this repository contains only the public showcase artifact.
