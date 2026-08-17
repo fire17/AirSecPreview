@@ -38,7 +38,7 @@ source files into this repository.
 This is a fully interactive terminal replay in one public artifact—no cross-origin tunnel,
 no local AirSec server, and no laptop that must remain online.
 
-- Person A, person B, BAG-1, and authorised security staff retain distinct visual identities.
+- Person A, person B, BAG-1, and authorised security staff retain distinct visual identities from the first replay frame.
 - Orange and red heartbeat rings are driven by scenario events, including the P2 pickup.
 - A selected entity exposes its whole path; an interaction dot reveals and opens related paths.
 - Any selected entity can be pinned into a durable watched list and reopened at its live or last-known position.
@@ -83,7 +83,7 @@ speed from 0.25× to 4×, and use the traffic slider to tune terminal density.
 | Security semantics | Records authorised staff contact without generating the illicit-contact alert |
 | Airport navigation | Fits Terminal 1 Wing A, Terminal 2, Terminal 3, the north satellite, international terminal, airside, or the full airport; free zoom/pan remains available |
 | Airport operations | Animates top-down aircraft on the airfield and identifies parked/taxiing state on hover |
-| Traffic density | Adds a deterministic high-density terminal population with an operator-controlled per-zone slider |
+| Traffic density | Adds a deterministic high-density terminal population controlled as people per 1,000 m², so larger public areas naturally carry more traffic |
 | Watched entities | Persists operator pins on-device, marks them on-map, and jumps to live or last-known position |
 | Adaptive operations rail | Collapses, pointer-resizes, keyboard-resizes, persists its state, and refits the map continuously |
 | Mobile field mode | Uses a full-screen map, one-finger pan, two-finger pinch, contained sheets, and a five-action safe-area dock |

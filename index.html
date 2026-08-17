@@ -246,8 +246,8 @@
         </div>
         <div class="toolrow" id="speedcontrols"><span class="label">speed</span></div>
         <div class="toolrow" id="trafficcontrols"><span class="label">traffic</span>
-          <input id="traffic" type="range" min="12" max="72" step="1" value="56" aria-label="Visible terminal traffic">
-          <output id="trafficout" for="traffic">56 / zone</output>
+          <input id="traffic" type="range" min="4" max="40" step="1" value="24" aria-label="Visible people density per thousand square metres">
+          <output id="trafficout" for="traffic">24 / 1k m²</output>
         </div>
       </div>
       <div id="wingname">Wing A · live bag demo</div>
@@ -316,7 +316,7 @@ const F_LOST=1<<2,F_PLACED=1<<3,F_ABANDONED=1<<4,F_CARRIED=1<<5,F_SELECTED=1<<6;
 const cv=document.getElementById('c'),ctx=cv.getContext('2d');
 let W=0,H=0,DPR=Math.min(devicePixelRatio||1,2);
 let fac=null,tf=null,hover=null,t0=performance.now();
-let WINGS=[],activeWing='wing-a',eventScope='current',simulationSpeed=1,trafficLimit=56;
+let WINGS=[],activeWing='wing-a',eventScope='current',simulationSpeed=1,trafficDensity=24;
 const view={cx:36,cy:32,zoom:1};
 const ents=new Map();               // id -> {px,py,tx,ty,t,flags,kind,seen}
 let selectedId=null,selectedGid=null,selectedRoute=null,branchRoutes=[],hoveredInteraction=null,simT=null;
@@ -446,10 +446,10 @@ function drawFacility(t){
     ctx.beginPath();ctx.arc(x,y,sel?4.5:2.8,0,7);ctx.strokeStyle=rgba(C.bg,.9);ctx.lineWidth=1.2;ctx.stroke();});
 }
 
-function routePointAt(route,t){
+function routePointAt(route,t,maxGap=1){
   const p=route?.points||[];if(!p.length)return null;
   for(let i=1;i<p.length;i++){const a=p[i-1],b=p[i];if(t<a.t||t>b.t)continue;
-    if(b.t-a.t>1)return null;const f=b.t===a.t?0:(t-a.t)/(b.t-a.t);
+    if(b.t-a.t>maxGap)return null;const f=b.t===a.t?0:(t-a.t)/(b.t-a.t);
     return{x:a.x+(b.x-a.x)*f,y:a.y+(b.y-a.y)*f,t,t0:a.t,t1:b.t};}
   const last=p[p.length-1];return Math.abs(t-last.t)<.001?{x:last.x,y:last.y,t,t0:t,t1:t}:null;
 }
@@ -458,9 +458,8 @@ const gidSuffix=gid=>String(gid||'').match(/#\d+$/)?.[0]||'';
 function entityColor(gid,kind,threat){const base=baseGid(gid);if(staffGids.has(gid))return C.ok;
   if(base==='BAG-1')return threat==='red'?C.redflag:(threat==='orange'?C.flag:C.bagBlue);
   if(kind==='item')return C.accent;if(base==='A')return C.personA;if(base==='B')return C.personB;return C.primary;}
-function crowdIndex(gid){const m=baseGid(gid).match(/C(\d+)$/);return m?Number(m[1]):null;}
-function entityVisible(gid){const i=crowdIndex(gid);return i==null||i<trafficLimit;}
-function refreshCounts(){let np=0,ni=0,ng=0;for(const[id,e]of ents){const meta=gidOf.get(id);if(!entityVisible(meta?.gid||''))continue;
+function entityVisible(gid,attrs){return !attrs?.crowd||Number(attrs.densityRank)<=trafficDensity;}
+function refreshCounts(){let np=0,ni=0,ng=0;for(const[id,e]of ents){const meta=gidOf.get(id);if(!entityVisible(meta?.gid||'',meta?.attrs))continue;
   if(e.kind===0)np++;else if(e.kind===1)ni++;else if(e.kind===2)ng++;}
   document.getElementById('npers').textContent=np;document.getElementById('nitem').textContent=ni;document.getElementById('ngrp').textContent=ng;
   refreshWatchedStatus();}
@@ -506,8 +505,8 @@ function drawRoutes(){
 function drawEntities(t){
   const now=performance.now();
   for(const[id,e]of ents){
-    const meta=gidOf.get(id),gid=meta?.gid||'';if(!entityVisible(gid)){e._hidden=true;e._sx=e._sy=null;continue;}e._hidden=false;
-    let wx,wy;if(staticDemo&&e.staticTrack){const st=staticNow()%STATIC_DURATION,p=routePointAt({points:e.staticTrack.points},st)||e.staticTrack.points[e.staticTrack.points.length-1];wx=p.x;wy=p.y;}
+    const meta=gidOf.get(id),gid=meta?.gid||'';if(!entityVisible(gid,meta?.attrs)){e._hidden=true;e._sx=e._sy=null;continue;}e._hidden=false;
+    let wx,wy;if(staticDemo&&e.staticTrack){const st=staticNow()%STATIC_DURATION,p=routePointAt({points:e.staticTrack.points},st,3)||e.staticTrack.points[e.staticTrack.points.length-1];wx=p.x;wy=p.y;}
     else{const a=Math.min(1,(now-e.t)/(e.lerpMs||380));wx=e.px+(e.tx-e.px)*a;wy=e.py+(e.ty-e.py)*a;}
     let x=tf.X(wx),y=tf.Y(wy);
     const lost=e.flags&F_LOST, sel=(e.flags&F_SELECTED)||id===selectedId, aband=e.flags&F_ABANDONED;
@@ -671,14 +670,17 @@ const keyPoint=(keys,t)=>{if(t<=keys[0][0])return{x:keys[0][1],y:keys[0][2]};
   const a=keys[keys.length-1];return{x:a[1],y:a[2]};};
 const sampled=(keys,start=0,end=STATIC_DURATION)=>{const out=[];for(let t=start;t<=end;t+=.5){const p=keyPoint(keys,t);out.push({t,x:p.x,y:p.y,cameras:[]});}return out;};
 const A_KEYS=[[0,60,3],[8,60,20],[16,60,30],[22,60,37],[28,50,43],[40,30,43],[42,30,43],[55,9,43],[65,4.5,43],[140,4.5,43]];
-const B_KEYS=[[30,60,3],[42,60,20],[52,60,37],[62,46,43],[80,31,43],[82,31,43],[95,20,60],[140,20,60]];
+// B is visibly present from the opening frame but remains unrelated to A and BAG-1
+// until the later pickup sequence. Their blue identity is therefore never confused with
+// the cyan ambient population.
+const B_KEYS=[[0,112,58],[12,110,47],[22,94,37],[30,60,3],[42,60,20],[52,60,37],[62,46,43],[80,31,43],[82,31,43],[95,20,60],[140,20,60]];
 const BAG_POINTS=[];for(let t=0;t<=STATIC_DURATION;t+=.5){const p=t<40?keyPoint(A_KEYS,t):t<80?{x:30,y:43}:keyPoint(B_KEYS,t);BAG_POINTS.push({t,x:p.x,y:p.y,cameras:[]});}
 function ev(t,type,src,srcKind,dst,dstKind,attrs={}){return{t,type,src,src_kind:srcKind,dst,dst_kind:dstKind,zone:null,attrs};}
 function addStaticTrack(gid,kind,points,events=[],attrs={}){const track={gid,kind,points,events,attrs};STATIC_TRACKS.push(track);STATIC_TIMELINES.set(gid,{gid,tracks:points,events});return track;}
 addStaticTrack('A','person',sampled(A_KEYS),[
   ev(40,'item_drop','A','person','BAG-1','item',{item:'BAG-1'}),ev(40.4,'item_placed','A','person','BAG-1','item',{item:'BAG-1'}),
   ev(80.4,'item_transfer','A','person','B','person',{item:'BAG-1'})]);
-addStaticTrack('B','person',sampled(B_KEYS,30),[
+addStaticTrack('B','person',sampled(B_KEYS),[
   ev(62,'proximity','B','person','BAG-1','item',{item:'BAG-1'}),ev(80,'item_pickup','B','person','BAG-1','item',{item:'BAG-1'}),
   ev(80.4,'item_transfer','A','person','B','person',{item:'BAG-1'})]);
 addStaticTrack('BAG-1','item',BAG_POINTS,[
@@ -699,24 +701,22 @@ addStaticTrack('WC-1','person',sampled([[0,386,8],[28,361,24],[58,336,43],[90,34
   ev(72,'item_pickup','WC-1','person','CASE-C','item',{item:'CASE-C'})]);
 addStaticTrack('CASE-C','item',sampled([[0,334,43],[72,334,43],[90,348,58],[140,348,58]]),[
   ev(68,'item_touch','SEC-3','person','CASE-C','item',{item:'CASE-C',authorised:true}),ev(72,'item_pickup','WC-1','person','CASE-C','item',{item:'CASE-C'})]);
-// A terminal should read as a terminal, not a sparse test fixture. These deterministic
-// travellers move on smooth, phase-shifted paths across all three wings; the traffic
-// control changes how many are visible without touching the A/B security story.
-for(let i=0;i<72;i++){const points=[],wing=i%3,cx=[22,60,98][wing],phase=i*1.731,
-    ax=9+(i%7),baseY=11+(i*13)%45,ay=2.2+(i%5)*.65,omega=.018+(i%4)*.0025;
-  for(let t=0;t<=STATIC_DURATION;t+=.5)points.push({t,x:Math.max(3,Math.min(117,cx+ax*Math.sin(phase+t*omega))),
-    y:Math.max(8,Math.min(61,baseY+ay*Math.sin(phase*.7+t*(omega*1.7)))),cameras:[]});
-  const partner='C'+((i+1)%72),events=i%9===0?[ev(34+(i%5)*8,'proximity','C'+i,'person',partner,'person',{})]:[];
-  addStaticTrack('C'+i,'person',points,events);}
-function addCampusCrowd(prefix,count,bounds){const[x0,y0,x1,y1]=bounds;
-  for(let i=0;i<count;i++){const points=[],phase=(i+prefix.length*7)*1.417,cx=x0+8+((i*19)%(Math.max(16,x1-x0-16))),
-      cy=y0+8+((i*11)%(Math.max(14,y1-y0-16))),ax=4+(i%6),ay=2+(i%4),omega=.016+(i%5)*.002;
-    for(let t=0;t<=STATIC_DURATION;t+=.5)points.push({t,x:Math.max(x0+3,Math.min(x1-3,cx+ax*Math.sin(phase+t*omega))),
-      y:Math.max(y0+3,Math.min(y1-3,cy+ay*Math.sin(phase*.8+t*omega*1.6))),cameras:[]});
-    const gid=prefix+'C'+i,partner=prefix+'C'+((i+1)%count),events=i%8===0?[ev(28+(i%6)*9,'proximity',gid,'person',partner,'person',{})]:[];
-    addStaticTrack(gid,'person',points,events);}}
-addCampusCrowd('T2-',34,[134,4,260,76]);addCampusCrowd('T3-',34,[274,4,398,76]);
-addCampusCrowd('N-',28,[52,82,210,164]);addCampusCrowd('I-',42,[220,82,395,164]);
+// Density is a physical rate, not an arbitrary per-wing cap. Every public terminal area
+// seeds the same maximum people-per-1,000 m² and every candidate carries a deterministic
+// density rank. The slider reveals the population that belongs in *that amount of floor
+// area*, so a large concourse naturally holds more people than a small gate wing.
+const CROWD_MAX_DENSITY=40;
+function addAreaCrowd(prefix,bounds){const[x0,y0,x1,y1]=bounds,area=(x1-x0)*(y1-y0),count=Math.ceil(area/1000*CROWD_MAX_DENSITY);
+  for(let i=0;i<count;i++){const points=[],phase=(i+prefix.length*7)*1.417,cx=x0+5+((i*19)%(Math.max(10,x1-x0-10))),
+      cy=y0+5+((i*11)%(Math.max(10,y1-y0-10))),ax=2.5+(i%7)*.72,ay=1.4+(i%5)*.5,omega=.016+(i%5)*.002;
+    // Ambient traffic is sampled every two seconds; the renderer interpolates it exactly,
+    // keeping a 2,300-person maximum fluid without allocating a full video-sized history.
+    for(let t=0;t<=STATIC_DURATION;t+=2)points.push({t,x:Math.max(x0+2,Math.min(x1-2,cx+ax*Math.sin(phase+t*omega))),
+      y:Math.max(y0+2,Math.min(y1-2,cy+ay*Math.sin(phase*.8+t*omega*1.6))),cameras:[]});
+    const gid=prefix+'C'+i,partner=prefix+'C'+((i+1)%count),events=i%19===0?[ev(28+(i%6)*9,'proximity',gid,'person',partner,'person',{})]:[];
+    addStaticTrack(gid,'person',points,events,{crowd:true,densityRank:(i+.5)/count*CROWD_MAX_DENSITY});}}
+addAreaCrowd('A-',[0,0,122,66]);addAreaCrowd('T2-',[132,0,262,78]);addAreaCrowd('T3-',[272,0,400,78]);
+addAreaCrowd('N-',[50,78,212,166]);addAreaCrowd('I-',[216,78,398,166]);
 STATIC_CUSTODY.set('BAG-1',[
   {t:0,type:'item_pickup',person:'A',attrs:{}},{t:40,type:'item_drop',person:'A',attrs:{}},
   {t:80.4,type:'item_transfer',person_from:'A',person_to:'B',person:'B',attrs:{from:'A',to:'B'}}]);
@@ -736,7 +736,7 @@ function resetStaticCycle(){feed.innerHTML='';alertRows.length=0;orangeTracked.c
   addNotice('Public showcase replay · same scenario contract, running entirely in this browser.');}
 function updateStatic(){let raw=staticNow(),cycle=Math.floor(raw/STATIC_DURATION),t=raw-cycle*STATIC_DURATION;
   if(t<simT||!Number.isFinite(simT))resetStaticCycle();simT=t;document.getElementById('simt').textContent=t.toFixed(1);
-  STATIC_TRACKS.forEach((track,id)=>{if(t<track.points[0].t){ents.delete(id+1);return;}const p=routePointAt({points:track.points},t)||track.points[track.points.length-1];
+  STATIC_TRACKS.forEach((track,id)=>{if(t<track.points[0].t){ents.delete(id+1);return;}const p=routePointAt({points:track.points},t,3)||track.points[track.points.length-1];
     let flags=track.kind==='item'?(track.gid==='BAG-1'?(t<40||t>=80?F_CARRIED:t>=70.4?F_ABANDONED:F_PLACED):(t>=72?F_CARRIED:F_PLACED)):0;
     const old=ents.get(id+1),now=performance.now();if(old){old.tx=p.x;old.ty=p.y;old.t=now;old.flags=flags;old.staticTrack=track;}
     else ents.set(id+1,{px:p.x,py:p.y,tx:p.x,ty:p.y,t:now,lerpMs:60,flags,kind:track.kind==='item'?1:0,staticTrack:track});});
@@ -1022,7 +1022,7 @@ function initSpeedControls(){const speeds=[.25,.5,1,2,4],box=document.getElement
     try{const r=await fetch('/demo/speed?speed='+speed,{method:'POST'});if(!r.ok)throw Error('HTTP '+r.status);const j=await r.json();setSpeedUI(j.simulation_speed);}
     catch(e){setTrackState('speed control unavailable · '+e.message,true);}});setSpeedUI(1);}
 function initTrafficControl(){const input=document.getElementById('traffic'),out=document.getElementById('trafficout');
-  const apply=()=>{trafficLimit=Number(input.value);out.value=trafficLimit+' / zone';refreshCounts();};input.addEventListener('input',apply);apply();}
+  const apply=()=>{trafficDensity=Number(input.value);out.value=trafficDensity+' / 1k m²';refreshCounts();};input.addEventListener('input',apply);apply();}
 
 // ---- adaptive shell: desktop rail + mobile field controls -----------------------
 const mobileLayout=matchMedia('(max-width:720px)'),mainEl=document.getElementById('main'),rail=document.getElementById('rail');
